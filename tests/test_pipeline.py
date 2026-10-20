@@ -456,6 +456,55 @@ def test_every_text_line_is_one_source_line(reports, name):
     assert "white-space:nowrap" in css and "white-space:pre" not in css
 
 
+def test_table_borders_are_customisable(reports):
+    """The cell border default must lose to a plain class or inline style, so a
+    user can hide or thicken one line without fighting the stylesheet."""
+    css = (OUT / "table_basic" / "styles.css").read_text(encoding="utf-8")
+    assert ":where(.tbl) :where(td,th)" in css
+    for cls in ("no-l", "no-r", "no-lr", "no-t", "no-b", "no-tb", "no-x"):
+        assert f".{cls}{{" in css, cls
+
+    from playwright.sync_api import sync_playwright
+
+    # Judge by rendered pixels: in collapse mode the computed style still reports
+    # each cell's own declared width, not which border actually got drawn.
+    page_html = (
+        f"<style>body{{margin:0;background:#fff}} td{{width:60px;height:40px}} {css}</style>"
+        "<table class='tbl' style='position:absolute;left:10px;top:10px;--rule:3px'><tr>"
+        "<td id='a' class='no-r'></td><td id='b'></td><td id='c' style='--bb:9px'></td>"
+        "</tr></table>"
+    )
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page(viewport={"width": 300, "height": 120})
+        page.set_content(page_html)
+        box = {k: page.eval_on_selector(f"#{k}", "e => e.getBoundingClientRect().toJSON()") for k in "abc"}
+        png = page.screenshot()
+        browser.close()
+
+    import cv2
+    import numpy as np
+
+    img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_GRAYSCALE)
+    mid_y = int(box["a"]["top"] + box["a"]["height"] / 2)
+
+    def dark_columns(x0, x1):
+        return int((img[mid_y, int(x0):int(x1)] < 128).sum())
+
+    ab = box["b"]["left"]
+    bc = box["c"]["left"]
+    assert dark_columns(ab - 3, ab + 3) == 0, "no-r must remove the line between a and b"
+    assert dark_columns(bc - 3, bc + 3) > 0, "lines elsewhere stay"
+    assert dark_columns(box["a"]["left"] - 3, box["a"]["left"] + 3) > 0, "a keeps its left border"
+
+    def dark_rows(cell):
+        x = int(box[cell]["left"] + box[cell]["width"] / 2)
+        y1 = box[cell]["top"] + box[cell]["height"]
+        return int((img[int(y1) - 8:int(y1) + 8, x] < 128).sum())
+
+    assert dark_rows("c") > dark_rows("b"), "--bb thickens one cell's bottom"
+
+
 # --- outlined text read from letter shapes ---------------------------------------
 
 import html as _html  # noqa: E402

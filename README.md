@@ -53,6 +53,7 @@ PDF ─► extract ─► tables, form boxes ─► layout ─► document.json 
 - **OCR** with Tesseract for scanned pages, and for single outlined regions that could not be matched.
 - **Form reconstruction:** checkboxes and character grids drawn as loose hairlines are rebuilt as `.box-row` / `.form-box` elements. Section outlines and signature lines become `.frame` / `.bracket`.
 - **Clean output:** one element per text line in page coordinates, a handful of utility classes (`.b`, `.i`, `.n`, `.w`, `.r`, …), no `data-*` attributes, and `white-space: nowrap`, so re-formatting the file cannot break the layout.
+- **Editable table borders:** hide or thicken individual cell lines with classes (`no-r`, `no-lr`, `no-x`, …) or per-side variables (`--bt`, `--br`, `--bb`, `--bl`). See [Customising table borders](#customising-table-borders).
 - **Validation report** per page: SSIM, ink recall and precision, baseline error, a text-preservation check, plus original, generated, diff and side-by-side PNGs.
 - **Single-file export** (`--single-file`) with CSS and images inlined.
 - **Print styles** that match the original page size.
@@ -196,6 +197,53 @@ Then open <http://127.0.0.1:5000>.
 4. **Open folder** opens the output folder in your file manager. **Open HTML** opens the result in a new tab.
 
 Each conversion gets its own folder, `out/<pdf-name>-<timestamp>/`, holding `original.pdf` and the full output package. The server only listens on `127.0.0.1` and runs one conversion at a time.
+
+### Customising table borders
+
+Generated tables are ready to edit by hand. Every cell border defaults to the table's `--rule` value, but that default has zero specificity (`:where(.tbl) :where(td,th)`), so **any class or inline style you put on a cell overrides it**. The output's CSS (`styles.css`, or the `<style>` block in `standalone.html`) also includes the `no-*` classes below.
+
+**Borders belong to the cell.** Put classes and styles on the `<td>`/`<th>`, not on the `<div>` or `<span>` inside it.
+
+**Hide a line**: add a class. Classes combine:
+
+| Class | Hides |
+|---|---|
+| `no-l` / `no-r` / `no-lr` | left / right / both |
+| `no-t` / `no-b` / `no-tb` | top / bottom / both |
+| `no-x` | all four |
+
+```html
+<td class="no-lr">…</td>
+<td class="no-r no-b">…</td>
+```
+
+**Change a line's thickness**: set a variable on the cell:
+
+| Variable | Side |
+|---|---|
+| `--bt` / `--br` / `--bb` / `--bl` | top / right / bottom / left |
+
+```html
+<td style="--bb:3pt">…</td>               <!-- thick bottom -->
+<td class="no-t" style="--bb:3pt">…</td>  <!-- mix both -->
+```
+
+**Rows and the whole table**: add rules to the CSS:
+
+```css
+.tbl tr:nth-child(4) > td { border-bottom: hidden; }   /* no line under row 4 */
+.tbl tr:nth-child(2) > td { --bt: 3pt; }               /* thick line above row 2 */
+.tbl { border: 3pt solid #000; }                       /* thick outer frame */
+```
+
+`style="--rule:1pt"` on the `<table>` changes the default thickness of every line.
+
+**How collapsed borders behave.** Neighbouring cells share each line, and the thicker border wins:
+- **Thicker** works from one cell.
+- **Thinner** only works when set on *both* cells that share the line.
+- To **remove** a line, use a `no-*` class. Setting a side to `0` doesn't work, because the neighbour still draws it.
+
+**Avoid** column selectors like `td:nth-child(3)`. Tables with `colspan` put a different column at that position on each row, so put classes on the actual cells.
 
 
 

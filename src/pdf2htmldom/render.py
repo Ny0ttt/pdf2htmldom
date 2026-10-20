@@ -440,8 +440,21 @@ body{{font-kerning:none;-webkit-font-smoothing:antialiased}}
 
 /* Tables */
 .tbl{{border-collapse:collapse;table-layout:fixed}}
-.tbl td,.tbl th{{padding:0;vertical-align:top;border:var(--rule) solid #000;font-weight:400;text-align:left}}
+.tbl td,.tbl th{{padding:0;vertical-align:top;font-weight:400;text-align:left}}
 .tbl th{{font-weight:700}}
+/* Default cell border at zero specificity, so any class or inline style on a
+   cell overrides it. Each side has its own variable, falling back to --rule:
+   style="--bb:3pt" changes one side only. */
+:where(.tbl) :where(td,th){{border-style:solid;border-color:var(--rule-c,#000);
+  border-width:var(--bt,var(--rule)) var(--br,var(--rule)) var(--bb,var(--rule)) var(--bl,var(--rule))}}
+/* Hide a line. "hidden" beats the neighbouring cell's border, so a shared line really disappears. */
+.no-l{{border-left:hidden}}
+.no-r{{border-right:hidden}}
+.no-lr{{border-left:hidden;border-right:hidden}}
+.no-t{{border-top:hidden}}
+.no-b{{border-bottom:hidden}}
+.no-tb{{border-top:hidden;border-bottom:hidden}}
+.no-x{{border:hidden}}
 .cellpad{{display:block}}
 
 .page{{break-after:page}}
