@@ -114,23 +114,43 @@ Python **3.10 or newer** is required. Only **3.12** has been verified; `constrai
 ### Windows
 
 ```powershell
-git clone https://github.com/<your-username>/pdf2htmldom.git   # placeholder: replace with the real URL
+# Download the source code and enter the project folder
+git clone https://github.com/Ny0ttt/pdf2htmldom.git
 cd pdf2htmldom
+
+# Create an isolated Python environment in .venv
 python -m venv .venv
+
+# Install pdf2htmldom dependencies
 .venv\Scripts\python.exe -m pip install -e ".[ui,dev]" -c constraints.txt
+
+# Download the Chromium browser Playwright 
 .venv\Scripts\python.exe -m playwright install chromium
-winget install UB-Mannheim.TesseractOCR        # optional: OCR
+
+# Optional: install Tesseract for OCR of scanned pages
+winget install UB-Mannheim.TesseractOCR
 ```
 
 ### Ubuntu
 
 ```bash
-sudo apt-get install -y python3-venv tesseract-ocr      # tesseract-ocr is optional
-sudo apt-get install -y ttf-mscorefonts-installer       # optional: Arial and Times New Roman (EULA prompt)
-git clone https://github.com/<your-username>/pdf2htmldom.git   # placeholder: replace with the real URL
+# Install Python's venv module, plus Tesseract for OCR (tesseract-ocr is optional)
+sudo apt-get install -y python3-venv tesseract-ocr
+
+# Optional: install Arial and Times New Roman
+sudo apt-get install -y ttf-mscorefonts-installer
+
+# Download the source code and enter the project folder
+git clone https://github.com/Ny0ttt/pdf2htmldom.git
 cd pdf2htmldom
+
+# Create an isolated Python environment in .venv
 python3 -m venv .venv
+
+# Install pdf2htmldom dependencies
 .venv/bin/python -m pip install -e ".[ui,dev]" -c constraints.txt
+
+# Download Chromium for Playwright, plus the system libraries it needs to launch
 .venv/bin/python -m playwright install --with-deps chromium
 ```
 
