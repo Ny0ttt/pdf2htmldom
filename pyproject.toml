@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf2htmldom"
+version = "0.1.0"
+description = "Rebuild PDF pages as real, editable HTML elements, positioned to match the original and checked in a browser."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Rasyid Hamidun" }]
+requires-python = ">=3.10"
+dependencies = [
+    "pymupdf>=1.24,<2",  # 2.x changes extraction behaviour; not yet validated
+    "pillow",
+    "numpy",
+    "opencv-python-headless",
+    "playwright",
+    "pydantic>=2",
+    "fonttools",
+    "pytesseract",
+]
+
+[project.optional-dependencies]
+ui = ["flask"]
+dev = ["pytest"]
+
+[project.scripts]
+pdf2htmldom = "pdf2htmldom.cli:main"
+pdf2htmldom-ui = "pdf2htmldom.webui:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pdf2htmldom = ["webui.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

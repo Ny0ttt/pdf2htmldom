@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pdf2htmldom</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #6b7280;
+    --border: #dde1e7; --accent: #2f6fed; --accent-text: #fff;
+    --pass: #15803d; --miss: #b45309; --err: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c; --card: #1c2027; --text: #e6e9ee; --muted: #9aa3af;
+      --border: #2c323c; --accent: #5b8cff; --accent-text: #fff;
+      --pass: #4ade80; --miss: #fbbf24; --err: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 900px; margin: 40px auto; padding: 0 16px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--border);
+          border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+  #drop { border: 2px dashed var(--border); border-radius: 8px; padding: 32px;
+          text-align: center; cursor: pointer; color: var(--muted); }
+  #drop.over { border-color: var(--accent); color: var(--text); }
+  #drop strong { color: var(--text); }
+  details { margin-top: 14px; color: var(--muted); }
+  details label { display: block; margin-top: 8px; }
+  input[type=text] { padding: 6px 8px; border: 1px solid var(--border);
+                     border-radius: 6px; background: var(--bg); color: var(--text); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 16px; }
+  button { font: inherit; padding: 9px 18px; border-radius: 7px; cursor: pointer;
+           border: 1px solid var(--border); background: var(--card); color: var(--text); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .spinner { width: 16px; height: 16px; border: 2px solid var(--border);
+             border-top-color: var(--accent); border-radius: 50%;
+             animation: spin .8s linear infinite; display: none; }
+  .busy .spinner { display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #status { color: var(--muted); }
+  .error { color: var(--err); white-space: pre-wrap; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  td, th { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+  .pass { color: var(--pass); font-weight: 600; }
+  .miss { color: var(--miss); font-weight: 600; }
+  .preview img { width: 100%; border: 1px solid var(--border); border-radius: 6px; margin-top: 10px; }
+  .muted { color: var(--muted); }
+  ul { margin: 6px 0 0; padding-left: 20px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>pdf2htmldom</h1>
+  <p class="sub">Upload a PDF, convert it to native HTML, open the result.</p>
+
+  <section class="card">
+    <div id="drop">
+      <strong>Drop a PDF here</strong> or click to choose
+      <div id="fname" class="muted"></div>
+    </div>
+    <input id="file" type="file" accept="application/pdf,.pdf" hidden>
+
+    <details>
+      <summary>Options</summary>
+      <label>Pages <input id="pages" type="text" placeholder="all (e.g. 1,3-5)"></label>
+      <label><input id="ocr" type="checkbox" checked> OCR text drawn as shapes or scanned (only runs when a page needs it)</label>
+    </details>
+
+    <div class="row" id="actions">
+      <button id="convert" class="primary" disabled>Convert</button>
+      <span class="spinner"></span>
+      <span id="status"></span>
+    </div>
+  </section>
+
+  <section class="card" id="result" hidden>
+    <div class="row" style="margin-top:0">
+      <button id="open" class="primary">Open folder</button>
+      <button id="html">Open HTML</button>
+      <span id="folder" class="muted"></span>
+    </div>
+    <h3>Checks</h3>
+    <table id="checks"><thead><tr><th></th><th>Metric</th><th>Value</th><th>Target</th></tr></thead><tbody></tbody></table>
+    <div id="extra"></div>
+    <h3>Original vs generated</h3>
+    <div class="preview" id="previews"></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let file = null, job = null;
+
+function pick(f) {
+  if (!f) return;
+  file = f;
+  $("fname").textContent = f.name;
+  $("convert").disabled = false;
+}
+
+$("drop").onclick = () => $("file").click();
+$("file").onchange = (e) => pick(e.target.files[0]);
+["dragenter", "dragover"].forEach((t) => $("drop").addEventListener(t, (e) => {
+  e.preventDefault(); $("drop").classList.add("over");
+}));
+["dragleave", "drop"].forEach((t) => $("drop").addEventListener(t, (e) => {
+  e.preventDefault(); $("drop").classList.remove("over");
+}));
+$("drop").addEventListener("drop", (e) => pick(e.dataTransfer.files[0]));
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+$("convert").onclick = async () => {
+  const fd = new FormData();
+  fd.append("pdf", file);
+  fd.append("pages", $("pages").value);
+  if ($("ocr").checked) fd.append("ocr", "on");
+
+  $("convert").disabled = true;
+  $("actions").classList.add("busy");
+  $("status").className = "";
+  $("status").textContent = "Converting… (about 2s per page)";
+  $("result").hidden = true;
+  const t0 = performance.now();
+
+  try {
+    const res = await fetch("/convert", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    show(data);
+    $("status").textContent = `Done in ${((performance.now() - t0) / 1000).toFixed(1)}s`;
+  } catch (err) {
+    $("status").className = "error";
+    $("status").textContent = err.message;
+  } finally {
+    $("convert").disabled = false;
+    $("actions").classList.remove("busy");
+  }
+};
+
+function show(d) {
+  job = d.job;
+  $("folder").textContent = d.folder;
+
+  $("checks").tBodies[0].innerHTML = Object.entries(d.acceptance).map(([k, v]) =>
+    `<tr><td class="${v.pass ? "pass" : "miss"}">${v.pass ? "PASS" : "MISS"}</td>
+     <td>${esc(k)}</td><td>${esc(v.value)}</td><td>${esc(v.target)}</td></tr>`).join("");
+
+  let extra = "";
+  const fonts = Object.entries(d.fonts);
+  if (fonts.length) extra += `<p class="muted">Fonts: ${fonts.map(([a, b]) => `${esc(a)} → ${esc(b)}`).join(", ")}</p>`;
+  if (d.warnings.length) extra += `<p><strong>Warnings</strong></p><ul>${d.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>`;
+  $("extra").innerHTML = extra;
+
+  $("previews").innerHTML = d.previews.map((p) =>
+    `<img src="/out/${encodeURIComponent(job)}/${encodeURIComponent(p)}" alt="${esc(p)}" loading="lazy">`).join("");
+  $("result").hidden = false;
+}
+
+$("open").onclick = () => fetch(`/open/${encodeURIComponent(job)}`, { method: "POST" });
+$("html").onclick = () => window.open(`/out/${encodeURIComponent(job)}/index.html`, "_blank");
+</script>
+</body>
+</html>
