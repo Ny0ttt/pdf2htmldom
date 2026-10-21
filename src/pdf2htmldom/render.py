@@ -190,8 +190,11 @@ def _render_text_block(
     )
 
 
-def _render_table(t: TableBlock, pool: _ClassPool, info: RenderInfo) -> str:
+def _render_table(
+    t: TableBlock, pool: _ClassPool, info: RenderInfo, corrections: dict[str, dict] | None = None
+) -> str:
     """A real <table> with real cells, positioned at its measured box."""
+    corrections = corrections or {}
     col_w = [t.col_edges[i + 1] - t.col_edges[i] for i in range(len(t.col_edges) - 1)]
     row_h = [t.row_edges[i + 1] - t.row_edges[i] for i in range(len(t.row_edges) - 1)]
 
@@ -225,11 +228,21 @@ def _render_table(t: TableBlock, pool: _ClassPool, info: RenderInfo) -> str:
                     for ln in cell.lines
                 )
                 info.text_chars += sum(len(ln.text) for ln in cell.lines)
+                # The browser pass measures the first line's baseline, like a free
+                # line's, and corrects it with a relative offset that never changes
+                # the row height. data-w="0" opts cells out of tracking fixes.
+                fix = corrections.get(first.id, {})
+                dy, dx = float(fix.get("dy", 0.0)), float(fix.get("dx", 0.0))
                 inner.append(
-                    f'<div class="cellpad" style="padding:{pad_top:.2f}pt 0 0 {pad_left:.2f}pt">{text}</div>'
+                    f'<div class="cellpad" data-el="{first.id}" data-src="{first.source}" '
+                    f'data-baseline="{first.baseline:.3f}" data-x="{first.origin_x:.3f}" data-w="0" '
+                    f'style="padding:{pad_top:.2f}pt 0 0 {pad_left:.2f}pt;top:{dy:.3f}pt;left:{dx:.3f}pt">{text}</div>'
+                )
+                info.targets[first.id] = _target(
+                    first.id, first.bbox, baseline=first.baseline, kind="line", size=first.size, text=first.text
                 )
             cells_html.append(f'<{tag}{attrs} data-el="{cell.bbox.x0:.0f}-{cell.bbox.y0:.0f}">{ "".join(inner) }</{tag}>')
-        rows_html.append(f"<tr>{''.join(cells_html)}</tr>")
+        rows_html.append(f'<tr style="height:{row_h[r]:.3f}pt">{"".join(cells_html)}</tr>')
 
     cols = "".join(f'<col style="width:{w:.3f}pt">' for w in col_w)
     info.targets[t.id] = _target(t.id, t.bbox, kind="table", rows=t.n_rows, cols=t.n_cols)
@@ -324,7 +337,7 @@ body{font-kerning:none;-webkit-font-smoothing:antialiased}
 .tbl{position:absolute;border-collapse:collapse;table-layout:fixed;overflow:visible}
 .tbl td,.tbl th{padding:0;vertical-align:top;overflow:visible;
   border:var(--rule) solid #000;font-weight:400;text-align:left}
-.cellpad{display:block}
+.cellpad{display:block;position:relative;font-size:0;line-height:1}
 .tbl th .cellpad{font-weight:700}
 .drw,.rule-h,.rule-v,.img,.vec,.frame{position:absolute}
 .vec{overflow:visible}
@@ -351,7 +364,7 @@ def render_document(
             if isinstance(el, TextBlock):
                 body.append(_render_text_block(el, pool, info, corrections))
             elif isinstance(el, TableBlock):
-                body.append(_render_table(el, pool, info))
+                body.append(_render_table(el, pool, info, corrections))
             elif isinstance(el, DrawingBlock):
                 body.append(_render_drawing(el, info))
             elif isinstance(el, ImageBlock):
@@ -455,8 +468,21 @@ body{{font-kerning:none;-webkit-font-smoothing:antialiased}}
 .no-b{{border-bottom:hidden}}
 .no-tb{{border-top:hidden;border-bottom:hidden}}
 .no-x{{border:hidden}}
-.cellpad{{display:block}}
+/* font-size:0 drops the inherited 12pt line strut; each span sets its own size.
+   A cell's position correction is a relative top/left, so it never changes the row height. */
+.cellpad{{display:block;position:relative;font-size:0;line-height:1}}
 
+/* On screen, each page is a separate sheet with a gap between sheets. The gap and
+   shadow sit outside the page box, so page coordinates are unchanged. */
+@media screen{{
+  body{{padding:24pt 0}}
+  .page{{box-shadow:0 1pt 4pt rgba(0,0,0,.3)}}
+  .page+.page{{margin-top:24pt}}
+}}
+/* In print, each page fills one sheet. */
+@media print{{
+  html,body{{background:none}}
+}}
 .page{{break-after:page}}
 .page:last-child{{break-after:auto}}
 """
@@ -642,8 +668,9 @@ def _clean_box_row(b: BoxRowBlock) -> str:
     return f'<div class="box-row" style="{style}">\n  ' + "\n  ".join(rows) + "\n</div>"
 
 
-def _clean_table(t: TableBlock) -> str:
+def _clean_table(t: TableBlock, corrections: dict[str, dict]) -> str:
     col_w = [t.col_edges[i + 1] - t.col_edges[i] for i in range(len(t.col_edges) - 1)]
+    row_h = [t.row_edges[i + 1] - t.row_edges[i] for i in range(len(t.row_edges) - 1)]
     by_pos = {(c.row, c.col): c for c in t.cells}
     rows_html: list[str] = []
     for r in range(t.n_rows):
@@ -661,6 +688,11 @@ def _clean_table(t: TableBlock) -> str:
                 first = cell.lines[0]
                 pad_top = max(0.0, (first.baseline - first.ascender * first.size) - cell.bbox.y0)
                 pad_left = max(0.0, first.origin_x - cell.bbox.x0)
+                fix = corrections.get(first.id, {})
+                dy, dx = float(fix.get("dy", 0.0)), float(fix.get("dx", 0.0))
+                shift = (f";top:{_num(dy)}pt" if abs(dy) > 0.001 else "") + (
+                    f";left:{_num(dx)}pt" if abs(dx) > 0.001 else ""
+                )
                 texts = []
                 for ln in cell.lines:
                     base = _span_style(_dominant(ln.spans))
@@ -669,11 +701,12 @@ def _clean_table(t: TableBlock) -> str:
                     c_attr = f' class="{" ".join(cls)}"' if cls else ""
                     texts.append(f'<span{c_attr} style="{";".join(css)}">{_inline(ln, base, ln.size, 1.0)}</span>')
                 inner = (
-                    f'<div class="cellpad" style="padding:{_num(pad_top)}pt 0 0 {_num(pad_left)}pt">'
+                    f'<div class="cellpad" style="padding:{_num(pad_top)}pt 0 0 {_num(pad_left)}pt{shift}">'
                     + "<br>".join(texts) + "</div>"
                 )
             cells.append(f"<{tag}{attrs}>{inner}</{tag}>")
-        rows_html.append("  <tr>" + "".join(cells) + "</tr>")
+        # Rows take the PDF's height, not their content's.
+        rows_html.append(f'  <tr style="height:{_num(row_h[r])}pt">' + "".join(cells) + "</tr>")
     cols = "".join(f'<col style="width:{_num(w)}pt">' for w in col_w)
     return (
         f'<table class="tbl" style="{_geom(t.bbox)};--rule:{_num(t.rule_width)}pt">\n'
@@ -693,7 +726,7 @@ def render_clean_document(
             if isinstance(el, TextBlock):
                 body.append(_clean_text_block(el, corrections))
             elif isinstance(el, TableBlock):
-                body.append(_clean_table(el))
+                body.append(_clean_table(el, corrections))
             elif isinstance(el, DrawingBlock):
                 body.append(_clean_drawing(el))
             elif isinstance(el, ImageBlock):

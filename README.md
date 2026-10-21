@@ -56,7 +56,7 @@ PDF ─► extract ─► tables, form boxes ─► layout ─► document.json 
 - **Editable table borders:** hide or thicken individual cell lines with classes (`no-r`, `no-lr`, `no-x`, …) or per-side variables (`--bt`, `--br`, `--bb`, `--bl`). See [Customising table borders](#customising-table-borders).
 - **Validation report** per page: SSIM, ink recall and precision, baseline error, a text-preservation check, plus original, generated, diff and side-by-side PNGs.
 - **Single-file export** (`--single-file`) with CSS and images inlined.
-- **Print styles** that match the original page size.
+- **Page view:** on screen, each PDF page shows as a separate sheet with a gap between pages, like a PDF viewer. Print styles match the original page size, one PDF page per sheet.
 - **Local web UI:** upload a PDF, convert, preview the scores and side-by-side images, then open the output folder.
 
 ## Demo
@@ -68,8 +68,8 @@ Example CLI run on the bundled `table_basic` fixture (a ruled table with merged 
     [PASS] text_preserved_pct       value=100.0  target=100.0
     [PASS] line_error_mean_pt       value=0.01  target=1.5
     [PASS] line_error_max_pt        value=0.014  target=4.0
-    [PASS] ssim_min                 value=0.9436  target=0.92
-    [PASS] ink_recall_min           value=0.9999  target=0.98
+    [PASS] ssim_min                 value=0.9559  target=0.92
+    [PASS] ink_recall_min           value=1.0  target=0.98
     [PASS] width_issues             value=0  target=0
 ```
 
@@ -354,14 +354,14 @@ python -m pytest -rs
 - Fixture PDFs are generated automatically before the tests run (`tests/conftest.py`). Their geometry is authored, so every assertion is a measured property with exact ground truth.
 - The outlined-text tests need **Arial** installed; they are skipped when it isn't. `-rs` shows each skip and its reason. Lines in fonts you don't have (often Arial Narrow and Calibri on Linux) are left out of that fixture.
 - Tesseract is **not** needed for the suite to pass.
-- One test is an expected failure (`xfail`): SSIM on pages dense with hairline rules lands just under the 0.92 target. That's a documented, measured miss (see [Known limitations](#known-limitations)).
+- One test may report an expected failure (`xfail`): SSIM on pages dense with hairline rules can land just under the 0.92 target, depending on how your Chromium rounds the borders. That's a documented, measured miss (see [Known limitations](#known-limitations)).
 - No linter or formatter is configured yet.
 
 ## Known limitations
 
 - **Fonts are substituted, not embedded.** The closest installed face is used and every substitution is listed in `report.json`.
-- **Text inside table cells** is placed from the first line onwards in normal flow, and row heights are not yet fixed. Cells with blank lines between paragraphs can drift vertically against neighbouring cells.
-- **SSIM on rule-dense pages** sits around 0.90–0.94 against a 0.92 target. Chromium rounds collapsed hairline borders differently from the PDF renderer.
+- **Multi-line table cells:** row heights and each cell's first line match the PDF. Later lines in the same cell follow in normal flow, left-aligned and single-spaced, so centred or widely spaced cell text (typical in header rows) can drift and overflow the cell.
+- **SSIM on rule-dense pages** sits around 0.85–0.95 against a 0.92 target. Chromium rounds collapsed hairline borders differently from the PDF renderer; ink recall and line positions are unaffected.
 - **Rotated text** is detected and skipped, with a warning.
 - **Multi-column reading order** is detected and flagged, and is provisional.
 - **Tables that continue across pages** are flagged, not joined.

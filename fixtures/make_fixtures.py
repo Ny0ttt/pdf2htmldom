@@ -117,6 +117,38 @@ def table_basic(path: Path) -> None:
     doc.close()
 
 
+DENSE_ROW_H = 10.2
+DENSE_ROWS = 32
+DENSE_TOP = 120.0
+
+
+def table_dense(path: Path) -> None:
+    """A ruled table whose rows (10.2pt) are shorter than a browser's default
+    12pt line, with small text and a footer just below it. Content-sized rows
+    grow past the PDF's and push the table over the footer."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=A4[1], height=A4[0])  # landscape
+
+    n_cols = 4
+    x0, x1 = MARGIN, A4[1] - MARGIN
+    step = (x1 - x0) / n_cols
+    xs = [x0 + step * i for i in range(n_cols + 1)]
+    ys = [DENSE_TOP + DENSE_ROW_H * i for i in range(DENSE_ROWS + 1)]
+    _grid_lines(page, xs, ys)
+
+    for r in range(DENSE_ROWS):
+        baseline = ys[r] + 7.8
+        _text(page, xs[0] + 20, baseline, str(r + 1), size=7.68)
+        _text(page, xs[1] + 20, baseline, f"{r + 1:02d}-Jan-26", size=7.68)
+        _text(page, xs[2] + 20, baseline, f"{(r + 1) * 1234.5:,.2f}", size=7.68)
+        _text(page, xs[3] + 20, baseline, f"{(r + 1) * 98.76:,.2f}", size=7.68)
+
+    _text(page, A4[1] / 2 - 30, ys[-1] + 14, "Page 1 of 1", size=7.68)
+
+    doc.save(path)
+    doc.close()
+
+
 def mixed_text(path: Path) -> None:
     """Text-only fixture: heading levels, a wrapped paragraph, a rule, a footer."""
     doc = pymupdf.open()
@@ -333,9 +365,10 @@ def outlined_text(path: Path) -> bool:
 def main() -> None:
     here = Path(__file__).parent
     table_basic(here / "table_basic.pdf")
+    table_dense(here / "table_dense.pdf")
     mixed_text(here / "mixed_text.pdf")
     multipage_report(here / "multipage.pdf")
-    written = ["table_basic.pdf", "mixed_text.pdf", "multipage.pdf"]
+    written = ["table_basic.pdf", "table_dense.pdf", "mixed_text.pdf", "multipage.pdf"]
     if outlined_text(here / "outlined_text.pdf"):
         written.append("outlined_text.pdf")
     for f in written:

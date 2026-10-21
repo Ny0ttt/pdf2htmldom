@@ -49,11 +49,13 @@ MEASURE_JS = r"""
         rec.w = tr.width * PT;
         rec.x = (tr.left - origin.left) * PT;
       }
-      // A zero-size inline-block sits exactly on the baseline of the last line.
+      // A zero-size inline-block sits exactly on the baseline of the line it is
+      // in. Prepended, that is the first line: the one data-baseline describes,
+      // also for a table cell holding several lines.
       const probe = document.createElement('span');
       probe.style.cssText =
         'display:inline-block;width:0;height:0;vertical-align:baseline;padding:0;margin:0';
-      el.appendChild(probe);
+      el.prepend(probe);
       const pr = probe.getBoundingClientRect();
       rec.baseline = (pr.bottom - origin.top) * PT;
       rec.text_left = (tr.left - origin.left) * PT;
@@ -141,6 +143,10 @@ class BrowserRenderer:
                     const cur = parseFloat(el.style.top) || 0;
                     el.style.top = (cur + c.dy).toFixed(3) + 'pt';
                   }
+                  if (c.dx) {
+                    const cur = parseFloat(el.style.left) || 0;
+                    el.style.left = (cur + c.dx).toFixed(3) + 'pt';
+                  }
                   if (c.ls) el.style.letterSpacing = c.ls.toFixed(3) + 'pt';
                   if (c.fs) {
                     const cur = parseFloat(el.style.fontSize) || 0;
@@ -178,6 +184,7 @@ def compute_corrections(
     Three levers, chosen by the size of the error:
 
     * ``dy`` -- baseline error is a pure translation, so one pass removes it.
+      Table cells also get ``dx``, the same idea horizontally.
     * ``fs`` -- a *large* width error means the font size is wrong, not the
       tracking. Width scales linearly with font size, so the fix is the ratio.
       This is the lever that makes OCR-derived lines converge, since their size
@@ -200,6 +207,13 @@ def compute_corrections(
             continue
         if "dy" in levers and abs(dy) > 0.02:
             rec["dy"] = dy
+        # A table cell's text starts after the collapsed border, which Chromium
+        # rounds to device pixels, so a cell also gets a horizontal shift. Free
+        # lines are placed with an exact "left" and never need one.
+        if "dy" in levers and "cellpad" in m.get("cls", ""):
+            dx = m["target_x"] - m["text_left"]
+            if 0.02 < abs(dx) < max_baseline_dy:
+                rec["dx"] = dx
 
         target_w = m.get("target_w", 0.0)
         if target_w > 0 and m["w"] > 1:

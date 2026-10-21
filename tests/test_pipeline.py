@@ -456,6 +456,53 @@ def test_every_text_line_is_one_source_line(reports, name):
     assert "white-space:nowrap" in css and "white-space:pre" not in css
 
 
+def test_short_rows_keep_their_pdf_height():
+    """Regression: rows shorter than the browser's default 12pt line used to grow
+    to fit it, so a long table ran over the footer below it."""
+    from playwright.sync_api import sync_playwright
+
+    build(str(FIXTURES / "table_dense.pdf"), OUT / "table_dense")
+    doc = json.loads((OUT / "table_dense" / "document.json").read_text(encoding="utf-8"))
+    t = [e for p in doc["pages"] for e in p["elements"] if e["type"] == "table"][0]
+    assert t["n_rows"] == 32
+    expected_pt = t["bbox"]["y1"] - t["bbox"]["y0"]
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        page.goto((OUT / "table_dense" / "index.html").as_uri())
+        rect = page.eval_on_selector(".tbl", "e => e.getBoundingClientRect().toJSON()")
+        browser.close()
+
+    height_pt = rect["height"] * 0.75  # CSS px -> pt
+    assert abs(height_pt - expected_pt) < 1.5, (height_pt, expected_pt)
+
+    report = json.loads((OUT / "table_dense" / "report.json").read_text(encoding="utf-8"))
+    assert report["acceptance"]["ink_recall_min"]["value"] > 0.9
+
+
+def test_pages_are_separate_sheets_on_screen_only(reports):
+    """On screen, pages are separated by a visible gap. In print, there is no gap,
+    so each PDF page still fills exactly one sheet."""
+    from playwright.sync_api import sync_playwright
+
+    tops_js = "() => [...document.querySelectorAll('.page')].map(p => p.getBoundingClientRect().toJSON())"
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        page.goto((OUT / "multipage" / "index.html").as_uri())
+        screen = page.evaluate(tops_js)
+        page.emulate_media(media="print")
+        printed = page.evaluate(tops_js)
+        browser.close()
+
+    assert len(screen) == 3
+    for a, b in zip(screen, screen[1:]):
+        assert b["top"] - a["bottom"] >= 20, "screen pages need a visible gap"
+    for a, b in zip(printed, printed[1:]):
+        assert abs(b["top"] - a["bottom"]) < 0.5, "print pages must not have a gap"
+
+
 def test_table_borders_are_customisable(reports):
     """The cell border default must lose to a plain class or inline style, so a
     user can hide or thicken one line without fighting the stylesheet."""
