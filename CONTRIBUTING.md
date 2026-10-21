@@ -4,7 +4,7 @@ Thanks for helping. This page covers the development setup and the few rules the
 
 ## Development setup
 
-Follow [Installation](README.md#installation) in the README, then check your machine:
+Follow [Quick start](README.md#quick-start) in the README, then check your machine:
 
 ```bash
 pdf2htmldom doctor

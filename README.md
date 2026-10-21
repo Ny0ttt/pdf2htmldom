@@ -16,7 +16,7 @@
 - [Demo](#demo)
 - [Technology stack](#technology-stack)
 - [Prerequisites](#prerequisites)
-- [Installation](#installation)
+- [Quick start](#quick-start)
 - [Usage](#usage)
 - [Testing](#testing)
 - [Known limitations](#known-limitations)
@@ -109,9 +109,11 @@ Example CLI run on the bundled `table_basic` fixture (a ruled table with merged 
 
 Python **3.10 or newer** is required. Only **3.12** has been verified; `constraints.txt` pins the versions tested with it. For what each dependency does and which are optional, see [Technology stack](#technology-stack).
 
-## Installation
+## Quick start
 
 ### Windows
+
+**1. Set up** (once). In PowerShell:
 
 ```powershell
 # Download the source code and enter the project folder
@@ -121,17 +123,39 @@ cd pdf2htmldom
 # Create an isolated Python environment in .venv
 python -m venv .venv
 
-# Install pdf2htmldom dependencies
+# Install pdf2htmldom and its dependencies
 .venv\Scripts\python.exe -m pip install -e ".[ui,dev]" -c constraints.txt
 
-# Download the Chromium browser Playwright 
+# Download the Chromium browser used for rendering and measuring
 .venv\Scripts\python.exe -m playwright install chromium
 
 # Optional: install Tesseract for OCR of scanned pages
 winget install UB-Mannheim.TesseractOCR
 ```
 
-### Ubuntu
+**2. Check the setup:**
+
+```powershell
+.venv\Scripts\pdf2htmldom.exe doctor
+```
+
+It should end with `Ready.` (see [Checking your setup](#checking-your-setup)).
+
+**3. Run it.** From the project folder, either start the web UI:
+
+```powershell
+.venv\Scripts\pdf2htmldom-ui.exe
+```
+
+and open <http://127.0.0.1:5000>, or convert from the command line:
+
+```powershell
+.venv\Scripts\pdf2htmldom.exe build path\to\document.pdf -o out\my-doc
+```
+
+### Linux (Ubuntu)
+
+**1. Set up** (once):
 
 ```bash
 # Install Python's venv module, plus Tesseract for OCR (tesseract-ocr is optional)
@@ -147,20 +171,38 @@ cd pdf2htmldom
 # Create an isolated Python environment in .venv
 python3 -m venv .venv
 
-# Install pdf2htmldom dependencies
+# Install pdf2htmldom and its dependencies
 .venv/bin/python -m pip install -e ".[ui,dev]" -c constraints.txt
 
-# Download Chromium for Playwright, plus the system libraries it needs to launch
+# Download Chromium, plus the system libraries it needs to launch
 .venv/bin/python -m playwright install --with-deps chromium
 ```
 
-On Linux, `--with-deps` also installs the system libraries Chromium needs. Without it, Chromium often fails to launch.
+`--with-deps` matters on Linux: without those system libraries, Chromium often fails to launch.
 
-### Verify your setup
+**2. Check the setup:**
 
 ```bash
-pdf2htmldom doctor        # Windows: .venv\Scripts\pdf2htmldom.exe doctor
+.venv/bin/pdf2htmldom doctor
 ```
+
+It should end with `Ready.` (see [Checking your setup](#checking-your-setup)).
+
+**3. Run it.** From the project folder, either start the web UI:
+
+```bash
+.venv/bin/pdf2htmldom-ui
+```
+
+and open <http://127.0.0.1:5000>, or convert from the command line:
+
+```bash
+.venv/bin/pdf2htmldom build path/to/document.pdf -o out/my-doc
+```
+
+### Checking your setup
+
+`doctor` prints one line per requirement:
 
 ```text
 [  OK ] python                  Python 3.12.10 (Windows AMD64)
@@ -175,13 +217,15 @@ Ready.
 
 **FAIL** lines must be fixed: each one prints the fix. **WARN** lines mean conversions run with reduced quality. The command exits with code 1 only if something failed.
 
-### Notes
+### Setup notes
 
 - **`-c constraints.txt`** pins the exact versions the test suite is verified with. Leave it out and pip installs the newest versions the ranges in `pyproject.toml` allow; those usually work, but haven't been checked.
 - Extras: `ui` adds Flask for the web UI, and `dev` adds pytest. For the CLI alone, `pip install -e . -c constraints.txt` is enough.
 - Tesseract on other systems: see the [Tesseract installation guide](https://tesseract-ocr.github.io/tessdoc/Installation.html). If it isn't on `PATH`, pdf2htmldom checks the usual Windows install locations, or you can set `TESSERACT_CMD` (see [Configuration](#configuration)).
 
 ## Usage
+
+The examples below use the short command names `pdf2htmldom` and `pdf2htmldom-ui`. They work as-is once the venv is activated (`.venv\Scripts\Activate.ps1` on Windows, `source .venv/bin/activate` on Linux). Otherwise, use the full `.venv` paths from [Quick start](#quick-start).
 
 ### Command line
 
@@ -199,7 +243,21 @@ pdf2htmldom build path/to/document.pdf -o out/my-doc --pages 1,3-5 --no-ocr
 pdf2htmldom build path/to/document.pdf -o out/my-doc --json
 ```
 
-`python -m pdf2htmldom.cli build …` works the same if the `pdf2htmldom` script is not on your `PATH`.
+`python -m pdf2htmldom.cli build …` works the same.
+
+All `build` options:
+
+| Option | Default | What it does |
+|---|---|---|
+| `-o`, `--out` | *(required)* | Output folder for the HTML package |
+| `--pages` | all | Pages to convert, e.g. `1,3-5` |
+| `--single-file` | off | Also write `standalone.html` with CSS and images inlined |
+| `--no-ocr` | off | Skip OCR (faster; text layer only) |
+| `--ocr-dpi` | `300` | Render resolution for OCR |
+| `--max-iters` | `3` | Maximum measure-and-correct passes in Chromium |
+| `--scale` | `1.5` | Device scale factor for the validation screenshots |
+| `--fit-ocr-size` | off | Experimental: also fit OCR'd line width by scaling the type. Doesn't converge reliably yet |
+| `--json` | off | Print the full report as JSON instead of the summary |
 
 The summary shows per-page scores, the text-preservation result, each acceptance target as `PASS`/`MISS`, and the first warnings (rotated text skipped, tables continuing across pages, regions left to OCR, …).
 
@@ -217,6 +275,25 @@ Then open <http://127.0.0.1:5000>.
 4. **Open folder** opens the output folder in your file manager. **Open HTML** opens the result in a new tab.
 
 Each conversion gets its own folder, `out/<pdf-name>-<timestamp>/`, holding `original.pdf` and the full output package. The server only listens on `127.0.0.1` and runs one conversion at a time.
+
+### Configuration
+
+Two optional environment variables:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `TESSERACT_CMD` | *(auto)* | Full path to the `tesseract` executable, if it isn't on `PATH` or in the usual Windows install locations |
+| `PDF2HTMLDOM_OUT` | `out` | Folder where the web UI saves conversions |
+
+```powershell
+# Windows (PowerShell)
+$env:TESSERACT_CMD = "D:\Tools\Tesseract-OCR\tesseract.exe"
+```
+
+```bash
+# Linux
+export PDF2HTMLDOM_OUT=/srv/pdf2htmldom-out
+```
 
 ### Customising table borders
 
