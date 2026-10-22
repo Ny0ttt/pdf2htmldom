@@ -184,7 +184,7 @@ def compute_corrections(
     Three levers, chosen by the size of the error:
 
     * ``dy`` -- baseline error is a pure translation, so one pass removes it.
-      Table cells also get ``dx``, the same idea horizontally.
+      Lines in table cells also get ``dx``, the same idea horizontally.
     * ``fs`` -- a *large* width error means the font size is wrong, not the
       tracking. Width scales linearly with font size, so the fix is the ratio.
       This is the lever that makes OCR-derived lines converge, since their size
@@ -207,10 +207,10 @@ def compute_corrections(
             continue
         if "dy" in levers and abs(dy) > 0.02:
             rec["dy"] = dy
-        # A table cell's text starts after the collapsed border, which Chromium
-        # rounds to device pixels, so a cell also gets a horizontal shift. Free
-        # lines are placed with an exact "left" and never need one.
-        if "dy" in levers and "cellpad" in m.get("cls", ""):
+        # A line in a table cell is placed from the table's corner, which sits
+        # inside a collapsed border that Chromium rounds to device pixels, so it
+        # also gets a horizontal shift. Free lines never need one.
+        if "dy" in levers and "cl" in m.get("cls", "").split():
             dx = m["target_x"] - m["text_left"]
             if 0.02 < abs(dx) < max_baseline_dy:
                 rec["dx"] = dx

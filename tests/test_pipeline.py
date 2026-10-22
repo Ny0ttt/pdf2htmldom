@@ -41,6 +41,37 @@ def reports() -> dict[str, dict]:
     return out
 
 
+@pytest.fixture(scope="session")
+def dense() -> dict:
+    """The dense-table fixture, built once and measured in Chromium."""
+    from playwright.sync_api import sync_playwright
+
+    out = OUT / "table_dense"
+    build(str(FIXTURES / "table_dense.pdf"), out)
+    doc = json.loads((out / "document.json").read_text(encoding="utf-8"))
+    table = [e for p in doc["pages"] for e in p["elements"] if e["type"] == "table"][0]
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        page.goto((out / "index.html").as_uri())
+        rect = page.eval_on_selector(".tbl", "e => e.getBoundingClientRect().toJSON()")
+        # Each text line in a cell: its horizontal extent against its cell's.
+        overflow = page.evaluate(
+            """() => [...document.querySelectorAll('.tbl td > span, .tbl th > span')].map(s => {
+                const r = document.createRange(); r.selectNodeContents(s);
+                const t = r.getBoundingClientRect(), c = s.parentElement.getBoundingClientRect();
+                return [s.textContent, [t.left, t.right], [c.left, c.right]];
+            })"""
+        )
+        browser.close()
+    return {
+        "table": table,
+        "table_rect": rect,
+        "overflow": overflow,
+        "report": json.loads((out / "report.json").read_text(encoding="utf-8")),
+    }
+
+
 # --- content ----------------------------------------------------------------
 
 
@@ -456,29 +487,37 @@ def test_every_text_line_is_one_source_line(reports, name):
     assert "white-space:nowrap" in css and "white-space:pre" not in css
 
 
-def test_short_rows_keep_their_pdf_height():
+def test_short_rows_keep_their_pdf_height(dense):
     """Regression: rows shorter than the browser's default 12pt line used to grow
     to fit it, so a long table ran over the footer below it."""
-    from playwright.sync_api import sync_playwright
-
-    build(str(FIXTURES / "table_dense.pdf"), OUT / "table_dense")
-    doc = json.loads((OUT / "table_dense" / "document.json").read_text(encoding="utf-8"))
-    t = [e for p in doc["pages"] for e in p["elements"] if e["type"] == "table"][0]
-    assert t["n_rows"] == 32
+    t = dense["table"]
+    assert t["n_rows"] == 33
     expected_pt = t["bbox"]["y1"] - t["bbox"]["y0"]
-
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch()
-        page = browser.new_page()
-        page.goto((OUT / "table_dense" / "index.html").as_uri())
-        rect = page.eval_on_selector(".tbl", "e => e.getBoundingClientRect().toJSON()")
-        browser.close()
-
-    height_pt = rect["height"] * 0.75  # CSS px -> pt
+    height_pt = dense["table_rect"]["height"] * 0.75  # CSS px -> pt
     assert abs(height_pt - expected_pt) < 1.5, (height_pt, expected_pt)
+    assert dense["report"]["acceptance"]["ink_recall_min"]["value"] > 0.9
 
-    report = json.loads((OUT / "table_dense" / "report.json").read_text(encoding="utf-8"))
-    assert report["acceptance"]["ink_recall_min"]["value"] > 0.9
+
+def test_every_cell_line_is_placed_from_the_pdf(dense):
+    """Regression: only a cell's first line used to be placed and measured. The
+    rest flowed left-aligned and single-spaced, so centred header labels drifted
+    and spilled into the next column while every reported number still passed."""
+    cell_lines = [ln for c in dense["table"]["cells"] for ln in c["lines"]]
+    assert sum(len(c["lines"]) > 1 for c in dense["table"]["cells"]) >= 3
+    page = dense["report"]["pages"][0]
+    assert page["lines_measured"] >= len(cell_lines)
+    assert page["line_error_max_pt"] < 0.1, page["worst_lines"]
+    assert page["width_issues"] == 0, page["width_issue_details"]
+    for text, line, cell in dense["overflow"]:
+        assert cell[0] - 0.5 <= line[0] and line[1] <= cell[1] + 0.5, f"{text!r} spills out of its cell"
+
+
+def test_page_stats_are_per_page(reports):
+    """Regression: every page reported the whole document's line measurements."""
+    pages = reports["multipage"]["pages"]
+    ids = [{w["id"].split("-")[0] for w in p["worst_lines"]} for p in pages]
+    for p, page_ids in zip(pages, ids):
+        assert page_ids <= {f"p{p['page']}"}, (p["page"], page_ids)
 
 
 def test_pages_are_separate_sheets_on_screen_only(reports):

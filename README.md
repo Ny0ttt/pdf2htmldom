@@ -360,7 +360,7 @@ python -m pytest -rs
 ## Known limitations
 
 - **Fonts are substituted, not embedded.** The closest installed face is used and every substitution is listed in `report.json`.
-- **Multi-line table cells:** row heights and each cell's first line match the PDF. Later lines in the same cell follow in normal flow, left-aligned and single-spaced, so centred or widely spaced cell text (typical in header rows) can drift and overflow the cell.
+- **Table cell text is positioned, not flowed.** Each line in a cell sits on its own PDF baseline, so cells match the PDF exactly, but editing a cell's text by hand won't re-wrap or re-centre it. Longer text can run past the cell border.
 - **SSIM on rule-dense pages** sits around 0.85–0.95 against a 0.92 target. Chromium rounds collapsed hairline borders differently from the PDF renderer; ink recall and line positions are unaffected.
 - **Rotated text** is detected and skipped, with a warning.
 - **Multi-column reading order** is detected and flagged, and is provisional.

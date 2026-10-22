@@ -120,12 +120,23 @@ def table_basic(path: Path) -> None:
 DENSE_ROW_H = 10.2
 DENSE_ROWS = 32
 DENSE_TOP = 120.0
+DENSE_HEADER_H = 36.0
+DENSE_HEADERS = [
+    ["Interim No."],
+    ["Date", "Valuation"],
+    ["Interim Claim Amount", "(RM)"],
+    ["LAD", "( RM / HARI", "(0.019% / ANGGARAN", "ARAHAN KERJA)"],
+]
 
 
 def table_dense(path: Path) -> None:
     """A ruled table whose rows (10.2pt) are shorter than a browser's default
     12pt line, with small text and a footer just below it. Content-sized rows
-    grow past the PDF's and push the table over the footer."""
+    grow past the PDF's and push the table over the footer.
+
+    The header row holds centred, multi-line bold labels: every line in a cell
+    has its own x and baseline, so placing only the first line and letting the
+    rest flow left-aligned shows up as a measured error."""
     doc = pymupdf.open()
     page = doc.new_page(width=A4[1], height=A4[0])  # landscape
 
@@ -133,17 +144,25 @@ def table_dense(path: Path) -> None:
     x0, x1 = MARGIN, A4[1] - MARGIN
     step = (x1 - x0) / n_cols
     xs = [x0 + step * i for i in range(n_cols + 1)]
-    ys = [DENSE_TOP + DENSE_ROW_H * i for i in range(DENSE_ROWS + 1)]
+    ys = [DENSE_TOP] + [DENSE_TOP + DENSE_HEADER_H + DENSE_ROW_H * i for i in range(DENSE_ROWS + 1)]
     _grid_lines(page, xs, ys)
 
-    for r in range(DENSE_ROWS):
-        baseline = ys[r] + 7.8
-        _text(page, xs[0] + 20, baseline, str(r + 1), size=7.68)
-        _text(page, xs[1] + 20, baseline, f"{r + 1:02d}-Jan-26", size=7.68)
-        _text(page, xs[2] + 20, baseline, f"{(r + 1) * 1234.5:,.2f}", size=7.68)
-        _text(page, xs[3] + 20, baseline, f"{(r + 1) * 98.76:,.2f}", size=7.68)
+    size, pitch = 7.68, 8.6
+    for c, label in enumerate(DENSE_HEADERS):
+        centre = (xs[c] + xs[c + 1]) / 2
+        first = ys[0] + (DENSE_HEADER_H - pitch * (len(label) - 1)) / 2 + 2.5
+        for i, text in enumerate(label):
+            w = pymupdf.get_text_length(text, fontname=BOLD_OF[FONT], fontsize=size)
+            _text(page, centre - w / 2, first + pitch * i, text, size=size, bold=True)
 
-    _text(page, A4[1] / 2 - 30, ys[-1] + 14, "Page 1 of 1", size=7.68)
+    for r in range(DENSE_ROWS):
+        baseline = ys[r + 1] + 7.8
+        _text(page, xs[0] + 20, baseline, str(r + 1), size=size)
+        _text(page, xs[1] + 20, baseline, f"{r + 1:02d}-Jan-26", size=size)
+        _text(page, xs[2] + 20, baseline, f"{(r + 1) * 1234.5:,.2f}", size=size)
+        _text(page, xs[3] + 20, baseline, f"{(r + 1) * 98.76:,.2f}", size=size)
+
+    _text(page, A4[1] / 2 - 30, ys[-1] + 14, "Page 1 of 1", size=size)
 
     doc.save(path)
     doc.close()

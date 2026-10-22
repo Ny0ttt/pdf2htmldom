@@ -217,29 +217,25 @@ def _render_table(
                 attrs += f' rowspan="{cell.rowspan}"'
             tag = "th" if cell.is_header else "td"
 
+            # Every line in a cell is placed on its own PDF baseline and x, like a
+            # free line. Cell text is out of flow, so it never changes the row
+            # height, and the table (absolutely positioned) is the origin.
             inner: list[str] = []
-            if cell.lines:
-                first = cell.lines[0]
-                # Padding places the cell's first baseline where the PDF put it.
-                pad_top = max(0.0, (first.baseline - first.ascender * first.size) - cell.bbox.y0)
-                pad_left = max(0.0, first.origin_x - cell.bbox.x0)
-                text = "<br>".join(
-                    "".join(f'<span class="{pool.get(s)}">{html.escape(s.text)}</span>' for s in ln.spans)
-                    for ln in cell.lines
-                )
-                info.text_chars += sum(len(ln.text) for ln in cell.lines)
-                # The browser pass measures the first line's baseline, like a free
-                # line's, and corrects it with a relative offset that never changes
-                # the row height. data-w="0" opts cells out of tracking fixes.
-                fix = corrections.get(first.id, {})
-                dy, dx = float(fix.get("dy", 0.0)), float(fix.get("dx", 0.0))
+            for ln in cell.lines:
+                fix = corrections.get(ln.id, {})
+                fs = float(fix.get("fs", 1.0))
+                left = ln.origin_x - t.bbox.x0 + float(fix.get("dx", 0.0))
+                top = _line_top(ln) - t.bbox.y0 + float(fix.get("dy", 0.0))
+                extra = f";letter-spacing:{fix['ls']:.3f}pt" if fix.get("ls") else ""
+                spans = "".join(_render_span(s, pool, fs) for s in ln.spans)
+                info.text_chars += len(ln.text)
                 inner.append(
-                    f'<div class="cellpad" data-el="{first.id}" data-src="{first.source}" '
-                    f'data-baseline="{first.baseline:.3f}" data-x="{first.origin_x:.3f}" data-w="0" '
-                    f'style="padding:{pad_top:.2f}pt 0 0 {pad_left:.2f}pt;top:{dy:.3f}pt;left:{dx:.3f}pt">{text}</div>'
+                    f'<span class="ln cl" data-el="{ln.id}" data-src="{ln.source}" data-baseline="{ln.baseline:.3f}" '
+                    f'data-x="{ln.origin_x:.3f}" data-w="{ln.bbox.width:.3f}" '
+                    f'style="left:{left:.3f}pt;top:{top:.3f}pt;font-size:{ln.size * fs:.2f}pt{extra}">{spans}</span>'
                 )
-                info.targets[first.id] = _target(
-                    first.id, first.bbox, baseline=first.baseline, kind="line", size=first.size, text=first.text
+                info.targets[ln.id] = _target(
+                    ln.id, ln.bbox, baseline=ln.baseline, kind="line", size=ln.size, text=ln.text
                 )
             cells_html.append(f'<{tag}{attrs} data-el="{cell.bbox.x0:.0f}-{cell.bbox.y0:.0f}">{ "".join(inner) }</{tag}>')
         rows_html.append(f'<tr style="height:{row_h[r]:.3f}pt">{"".join(cells_html)}</tr>')
@@ -337,8 +333,7 @@ body{font-kerning:none;-webkit-font-smoothing:antialiased}
 .tbl{position:absolute;border-collapse:collapse;table-layout:fixed;overflow:visible}
 .tbl td,.tbl th{padding:0;vertical-align:top;overflow:visible;
   border:var(--rule) solid #000;font-weight:400;text-align:left}
-.cellpad{display:block;position:relative;font-size:0;line-height:1}
-.tbl th .cellpad{font-weight:700}
+.tbl th{font-weight:700}
 .drw,.rule-h,.rule-v,.img,.vec,.frame{position:absolute}
 .vec{overflow:visible}
 .img{object-fit:fill}
@@ -468,9 +463,9 @@ body{{font-kerning:none;-webkit-font-smoothing:antialiased}}
 .no-b{{border-bottom:hidden}}
 .no-tb{{border-top:hidden;border-bottom:hidden}}
 .no-x{{border:hidden}}
-/* font-size:0 drops the inherited 12pt line strut; each span sets its own size.
-   A cell's position correction is a relative top/left, so it never changes the row height. */
-.cellpad{{display:block;position:relative;font-size:0;line-height:1}}
+/* Cell text: each line sits on its own PDF baseline, relative to the table's
+   corner. It is out of flow, so it never changes the row height. */
+.tbl td>span,.tbl th>span{{position:absolute;line-height:1;white-space:nowrap}}
 
 /* On screen, each page is a separate sheet with a gap between sheets. The gap and
    shadow sit outside the page box, so page coordinates are unchanged. */
@@ -578,14 +573,19 @@ def _inline(ln: Line, base: dict, size: float, fs: float) -> str:
     return "".join(parts)
 
 
-def _clean_line(ln: Line, tag: str, corrections: dict[str, dict]) -> str:
+def _clean_line(
+    ln: Line, tag: str, corrections: dict[str, dict], origin: tuple[float, float] = (0.0, 0.0)
+) -> str:
+    """One text line, positioned relative to ``origin``: the page for free text,
+    the table's top-left corner for a line in a cell."""
     fix = corrections.get(ln.id, {})
     fs = float(fix.get("fs", 1.0))
     size = ln.size * fs
     base = _span_style(_dominant(ln.spans))
     cls, css = _style_attrs(base)
-    top = _line_top(ln) + float(fix.get("dy", 0.0))
-    css = [f"left:{_num(ln.origin_x)}pt", f"top:{_num(top)}pt", f"font-size:{_num(size)}pt"] + css
+    left = ln.origin_x - origin[0] + float(fix.get("dx", 0.0))
+    top = _line_top(ln) - origin[1] + float(fix.get("dy", 0.0))
+    css = [f"left:{_num(left)}pt", f"top:{_num(top)}pt", f"font-size:{_num(size)}pt"] + css
     if fix.get("ls"):
         css.append(f"letter-spacing:{_num(fix['ls'])}pt")
     c = f' class="{" ".join(cls)}"' if cls else ""
@@ -671,6 +671,7 @@ def _clean_box_row(b: BoxRowBlock) -> str:
 def _clean_table(t: TableBlock, corrections: dict[str, dict]) -> str:
     col_w = [t.col_edges[i + 1] - t.col_edges[i] for i in range(len(t.col_edges) - 1)]
     row_h = [t.row_edges[i + 1] - t.row_edges[i] for i in range(len(t.row_edges) - 1)]
+    origin = (t.bbox.x0, t.bbox.y0)
     by_pos = {(c.row, c.col): c for c in t.cells}
     rows_html: list[str] = []
     for r in range(t.n_rows):
@@ -683,27 +684,7 @@ def _clean_table(t: TableBlock, corrections: dict[str, dict]) -> str:
                 f' rowspan="{cell.rowspan}"' if cell.rowspan > 1 else ""
             )
             tag = "th" if cell.is_header else "td"
-            inner = ""
-            if cell.lines:
-                first = cell.lines[0]
-                pad_top = max(0.0, (first.baseline - first.ascender * first.size) - cell.bbox.y0)
-                pad_left = max(0.0, first.origin_x - cell.bbox.x0)
-                fix = corrections.get(first.id, {})
-                dy, dx = float(fix.get("dy", 0.0)), float(fix.get("dx", 0.0))
-                shift = (f";top:{_num(dy)}pt" if abs(dy) > 0.001 else "") + (
-                    f";left:{_num(dx)}pt" if abs(dx) > 0.001 else ""
-                )
-                texts = []
-                for ln in cell.lines:
-                    base = _span_style(_dominant(ln.spans))
-                    cls, css = _style_attrs(base)
-                    css.insert(0, f"font-size:{_num(ln.size)}pt")
-                    c_attr = f' class="{" ".join(cls)}"' if cls else ""
-                    texts.append(f'<span{c_attr} style="{";".join(css)}">{_inline(ln, base, ln.size, 1.0)}</span>')
-                inner = (
-                    f'<div class="cellpad" style="padding:{_num(pad_top)}pt 0 0 {_num(pad_left)}pt{shift}">'
-                    + "<br>".join(texts) + "</div>"
-                )
+            inner = "".join(_clean_line(ln, "span", corrections, origin) for ln in cell.lines)
             cells.append(f"<{tag}{attrs}>{inner}</{tag}>")
         # Rows take the PDF's height, not their content's.
         rows_html.append(f'  <tr style="height:{_num(row_h[r])}pt">' + "".join(cells) + "</tr>")

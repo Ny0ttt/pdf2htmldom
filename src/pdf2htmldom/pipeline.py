@@ -426,7 +426,11 @@ def build(
             br.screenshot_element(f"#page-{page.number}", gen_png)
             gen = cv2.imread(str(gen_png), cv2.IMREAD_COLOR)
 
-            comparison = cmp.compare(ref, gen, final_measurements)
+            # Line ids start with "p<page>-", so each page reports only its own lines.
+            page_measurements = {
+                k: v for k, v in final_measurements.items() if k.startswith(f"p{page.number}-")
+            }
+            comparison = cmp.compare(ref, gen, page_measurements)
             cv2.imwrite(str(out / f"page-{page.number}-diff.png"), cmp.diff_image(ref, gen))
             cv2.imwrite(str(out / f"page-{page.number}-original.png"), ref)
             _side_by_side(ref, gen, out / f"page-{page.number}-side-by-side.png")
