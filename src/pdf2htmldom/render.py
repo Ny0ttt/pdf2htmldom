@@ -203,6 +203,26 @@ def _render_text_block(
     )
 
 
+def _edge_class(t: TableBlock, cell) -> str:
+    """Hide the borders on edges the PDF never ruled (split-out item rows)."""
+    top = cell.row in t.hidden_row_edges
+    bottom = cell.row + cell.rowspan in t.hidden_row_edges
+    return "no-tb" if top and bottom else "no-t" if top else "no-b" if bottom else ""
+
+
+def _line_shifts(lines: list[Line]) -> list[tuple[float, float]]:
+    """(margin-top, margin-left) placing each line of a cell where the PDF has it.
+
+    Each line is a block exactly one font size tall (line-height 1), so the gap
+    to the previous line is what is left of their top-to-top distance. Every x
+    is relative to the first line, which the cell's padding already places.
+    """
+    out = [(0.0, 0.0)]
+    for prev, ln in zip(lines, lines[1:]):
+        out.append((_line_top(ln) - _line_top(prev) - prev.size, ln.origin_x - lines[0].origin_x))
+    return out
+
+
 def _render_table(
     t: TableBlock, pool: _ClassPool, info: RenderInfo, corrections: dict[str, dict] | None = None
 ) -> str:
@@ -229,6 +249,8 @@ def _render_table(
             if cell.rowspan > 1:
                 attrs += f' rowspan="{cell.rowspan}"'
             tag = "th" if cell.is_header else "td"
+            if edge := _edge_class(t, cell):
+                attrs += f' class="{edge}"'
 
             inner: list[str] = []
             if cell.lines:
@@ -236,9 +258,11 @@ def _render_table(
                 # Padding places the cell's first baseline where the PDF put it.
                 pad_top = max(0.0, (first.baseline - first.ascender * first.size) - cell.bbox.y0)
                 pad_left = max(0.0, first.origin_x - cell.bbox.x0)
-                text = "<br>".join(
-                    "".join(f'<span class="{pool.get(s)}">{html.escape(s.text)}</span>' for s in ln.spans)
-                    for ln in cell.lines
+                text = "".join(
+                    f'<span class="cl" style="font-size:{ln.size:.2f}pt;margin:{mt:.3f}pt 0 0 {ml:.3f}pt">'
+                    + "".join(f'<span class="{pool.get(s)}">{html.escape(s.text)}</span>' for s in ln.spans)
+                    + "</span>"
+                    for ln, (mt, ml) in zip(cell.lines, _line_shifts(cell.lines))
                 )
                 info.text_chars += sum(len(ln.text) for ln in cell.lines)
                 # The browser pass measures the first line's baseline, like a free
@@ -351,7 +375,11 @@ body{font-kerning:none;-webkit-font-smoothing:antialiased}
 .tbl td,.tbl th{padding:0;vertical-align:top;overflow:visible;
   border:var(--rule) solid #000;font-weight:400;text-align:left}
 .cellpad{display:block;position:relative;font-size:0;line-height:1}
+.cellpad>.cl{display:block;white-space:pre}
 .tbl th .cellpad{font-weight:700}
+.tbl .no-t{border-top:hidden}
+.tbl .no-b{border-bottom:hidden}
+.tbl .no-tb{border-top:hidden;border-bottom:hidden}
 .drw,.rule-h,.rule-v,.img,.vec,.frame{position:absolute}
 .vec{overflow:visible}
 .img{object-fit:fill}
@@ -488,6 +516,8 @@ body{{font-kerning:none;-webkit-font-smoothing:antialiased}}
 /* font-size:0 drops the inherited 12pt line strut; each span sets its own size.
    A cell's position correction is a relative top/left, so it never changes the row height. */
 .cellpad{{display:block;position:relative;font-size:0;line-height:1}}
+/* One block per line; margins carry the PDF's own gaps and indents. */
+.cellpad>*{{display:block}}
 
 /* On screen, each page is a separate sheet with a gap between sheets. The gap and
    shadow sit outside the page box, so page coordinates are unchanged. */
@@ -717,6 +747,8 @@ def _clean_table(t: TableBlock, corrections: dict[str, dict]) -> str:
                 f' rowspan="{cell.rowspan}"' if cell.rowspan > 1 else ""
             )
             tag = "th" if cell.is_header else "td"
+            if edge := _edge_class(t, cell):
+                attrs += f' class="{edge}"'
             inner = ""
             if cell.lines:
                 first = cell.lines[0]
@@ -728,15 +760,19 @@ def _clean_table(t: TableBlock, corrections: dict[str, dict]) -> str:
                     f";left:{_num(dx)}pt" if abs(dx) > 0.001 else ""
                 )
                 texts = []
-                for ln in cell.lines:
+                for ln, (mt, ml) in zip(cell.lines, _line_shifts(cell.lines)):
                     base = _line_base(ln)
                     cls, css = _style_attrs(base)
                     css.insert(0, f"font-size:{_num(ln.size)}pt")
+                    if abs(mt) > 0.001:
+                        css.append(f"margin-top:{_num(mt)}pt")
+                    if abs(ml) > 0.001:
+                        css.append(f"margin-left:{_num(ml)}pt")
                     c_attr = f' class="{" ".join(cls)}"' if cls else ""
                     texts.append(f'<span{c_attr} style="{";".join(css)}">{_inline(ln, base, ln.size, 1.0)}</span>')
                 inner = (
                     f'<div class="cellpad" style="padding:{_num(pad_top)}pt 0 0 {_num(pad_left)}pt{shift}">'
-                    + "<br>".join(texts) + "</div>"
+                    + "".join(texts) + "</div>"
                 )
             cells.append(f"<{tag}{attrs}>{inner}</{tag}>")
         # Rows take the PDF's height, not their content's.

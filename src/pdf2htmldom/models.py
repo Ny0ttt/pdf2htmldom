@@ -168,6 +168,9 @@ class TableBlock(BaseModel):
     source: Source = "pdf"
     strategy: str = "lines"  # lines | lines_strict | text
     rule_width: float = 0.7  # measured stroke width of the original's rules, in pt
+    # Indices into row_edges with no rule in the PDF: item rows split out of one
+    # ruled row by their aligned text. Rendered as hidden borders.
+    hidden_row_edges: list[int] = Field(default_factory=list)
 
 
 class DrawingBlock(BaseModel):

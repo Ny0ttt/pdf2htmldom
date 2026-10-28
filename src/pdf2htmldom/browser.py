@@ -50,12 +50,13 @@ MEASURE_JS = r"""
         rec.x = (tr.left - origin.left) * PT;
       }
       // A zero-size inline-block sits exactly on the baseline of the line it is
-      // in. Prepended, that is the first line: the one data-baseline describes,
-      // also for a table cell holding several lines.
+      // in. Prepended, that is the first line: the one data-baseline describes.
+      // A table cell holds one block per line, so the probe goes in the first
+      // of those; prepended to the cell itself it would sit on an empty line.
       const probe = document.createElement('span');
       probe.style.cssText =
         'display:inline-block;width:0;height:0;vertical-align:baseline;padding:0;margin:0';
-      el.prepend(probe);
+      (el.querySelector(':scope > .cl') || el).prepend(probe);
       const pr = probe.getBoundingClientRect();
       rec.baseline = (pr.bottom - origin.top) * PT;
       rec.text_left = (tr.left - origin.left) * PT;

@@ -12,6 +12,8 @@ underlying finder reports spans.
 
 from __future__ import annotations
 
+import bisect
+
 import pymupdf
 
 from .models import BBox, Line, TableBlock, TableCell
@@ -180,6 +182,100 @@ def detect_tables(
 
     remaining = [ln for ln in lines if ln.id not in consumed]
     return tables, remaining, rejected
+
+
+BASELINE_TOL = 1.5  # pt: lines this close share a baseline
+ANCHOR_MIN_CELLS = 3  # an item row is text aligned across at least this many cells
+CONTINUATION_GAP = 0.5  # of the font size: a smaller gap continues the line above
+
+
+def _band_cuts(cells: list[TableCell], y0: float, y1: float) -> list[float] | None:
+    """Where to split one ruled row into item rows, or None to leave it whole.
+
+    Claim sheets and BOQs often rule only the columns, leaving every item in one
+    tall row. Each item still has a baseline its quantity, rate and amount share,
+    so a baseline found in several cells marks an item. In each cell, the
+    paragraph overlapping that baseline belongs to the item -- a description is
+    often centred on it rather than starting there. The cut goes in the gap after
+    the item's lowest paragraph, so a heading above an item stays with it.
+    """
+    lines = [(ci, ln) for ci, c in enumerate(cells) for ln in c.lines]
+    # Paragraphs per cell: runs of lines whose gaps are line-sized.
+    paras: list[list[Line]] = []
+    for c in cells:
+        for ln in c.lines:
+            prev = paras[-1][-1] if paras and paras[-1][0] in c.lines else None
+            if prev is not None and ln.bbox.y0 - prev.bbox.y1 <= CONTINUATION_GAP * prev.size:
+                paras[-1].append(ln)
+            else:
+                paras.append([ln])
+    groups: list[tuple[float, set[int]]] = []
+    for ci, ln in sorted(lines, key=lambda p: p[1].baseline):
+        if groups and ln.baseline - groups[-1][0] <= BASELINE_TOL:
+            groups[-1][1].add(ci)
+        else:
+            groups.append((ln.baseline, {ci}))
+    anchors = [b for b, cis in groups if len(cis) >= ANCHOR_MIN_CELLS]
+    if len(anchors) < 2:
+        return None
+
+    cuts: list[float] = []
+    for a, b in zip(anchors, anchors[1:]):
+        on_a = [ln for _, ln in lines if abs(ln.baseline - a) <= BASELINE_TOL]
+        top, bot = min(ln.bbox.y0 for ln in on_a), max(ln.bbox.y1 for ln in on_a)
+        owned = [p for p in paras if any(ln.bbox.y0 < bot and ln.bbox.y1 > top for ln in p)]
+        carried = {ln.id for p in owned for ln in p}
+        bottom = max(ln.bbox.y1 for p in owned for ln in p)
+        below = [
+            ln.bbox.y0 for _, ln in lines
+            if ln.id not in carried and a + BASELINE_TOL < ln.baseline <= b + BASELINE_TOL
+        ]
+        if not below or min(below) <= bottom:
+            return None  # text of two items interleaves: no clean line to cut on
+        cuts.append((bottom + min(below)) / 2)
+    if not (y0 < cuts[0] and cuts[-1] < y1):
+        return None
+    return cuts
+
+
+def split_item_rows(t: TableBlock) -> int:
+    """Split ruled rows that hold several items into one row per item, joined by
+    hidden borders so nothing is drawn where the PDF draws nothing. Returns the
+    number of rows added."""
+    added = 0
+    r = 0
+    while r < t.n_rows:
+        row_cells = [c for c in t.cells if c.row == r and c.rowspan == 1]
+        cuts = _band_cuts(row_cells, t.row_edges[r], t.row_edges[r + 1]) if row_cells else None
+        if not cuts:
+            r += 1
+            continue
+        n = len(cuts)
+        edges = [t.row_edges[r], *cuts, t.row_edges[r + 1]]
+        cells: list[TableCell] = []
+        for c in t.cells:
+            if c.row > r:
+                cells.append(c.model_copy(update={"row": c.row + n}))
+            elif c.row == r and c.rowspan == 1:
+                for k in range(n + 1):
+                    cells.append(c.model_copy(update={
+                        "row": r + k,
+                        "bbox": BBox(x0=c.bbox.x0, y0=edges[k], x1=c.bbox.x1, y1=edges[k + 1]),
+                        "lines": [ln for ln in c.lines if bisect.bisect(cuts, ln.bbox.cy) == k],
+                    }))
+            elif c.row + c.rowspan > r:  # a merged cell spanning this row spans its items too
+                cells.append(c.model_copy(update={"rowspan": c.rowspan + n}))
+            else:
+                cells.append(c)
+        t.cells = sorted(cells, key=lambda c: (c.row, c.col))
+        t.row_edges[r + 1:r + 1] = cuts
+        t.hidden_row_edges = sorted(
+            [i + n if i > r else i for i in t.hidden_row_edges] + list(range(r + 1, r + 1 + n))
+        )
+        t.n_rows += n
+        added += n
+        r += n + 1
+    return added
 
 
 def flag_cross_page_tables(tables_by_page: dict[int, list[TableBlock]], page_heights: dict[int, float]) -> list[str]:

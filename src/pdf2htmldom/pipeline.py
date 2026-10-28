@@ -35,7 +35,7 @@ from .layout import (
 )
 from .models import Document, Page
 from .render import render_clean_document, render_document
-from .tables import detect_tables, flag_cross_page_tables
+from .tables import detect_tables, flag_cross_page_tables, split_item_rows
 from .underline import detect_underlines
 
 LIGATURES = {
@@ -183,6 +183,10 @@ def build_ir(
 
         tables, remaining, rejected = detect_tables(pymupdf_page, raw.lines, raw.number)
         warns = list(rejected)
+        for t in tables:
+            if n_split := split_item_rows(t):
+                warns.append(f"page {raw.number}: {t.id}: {n_split} item row(s) split out by aligned text "
+                             "(no rule between them in the PDF)")
         if not tables and allow_borderless:
             # Opt-in only, and still validated: the text strategy is a guess.
             tables, remaining, rejected2 = detect_tables(

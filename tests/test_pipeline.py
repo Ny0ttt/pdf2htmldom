@@ -486,6 +486,68 @@ def test_partial_rule_underlines_only_the_words_it_covers():
     assert [(s.text, s.underline) for s in spans] == [("Supply and ", False), ("deliver", True)]
 
 
+# --- item rows split out of one ruled row ---------------------------------------
+# Like a claim sheet: only the columns are ruled, so every item shares one tall
+# row. Each item has a heading, then a description centred on the baseline its
+# unit, rate and amount share.
+
+from pdf2htmldom.models import TableBlock, TableCell  # noqa: E402
+from pdf2htmldom.tables import split_item_rows  # noqa: E402
+
+
+def _item_table() -> TableBlock:
+    xs, ys = [0, 20, 120, 160, 200], [0, 10, 200, 220]
+
+    def cell(r, c, *lines):
+        return TableCell(row=r, col=c, bbox=BBox(x0=xs[c], y0=ys[r], x1=xs[c + 1], y1=ys[r + 1]),
+                         lines=list(lines), is_header=r == 0)
+
+    L = lambda lid, text, x, base: _line(lid, text, x, x + 30, base, source="pdf")  # noqa: E731
+    return TableBlock(
+        id="t", bbox=BBox(x0=0, y0=0, x1=200, y1=220), n_rows=3, n_cols=4, col_edges=xs, row_edges=ys,
+        cells=[
+            cell(0, 0, L("h0", "ITEM", 2, 8)), cell(0, 1), cell(0, 2), cell(0, 3),
+            cell(1, 0, L("a", "a.", 2, 40), L("b", "b.", 2, 100)),
+            cell(1, 1, L("ha", "Crusher run", 22, 20), L("da1", "Supply and", 22, 36), L("da2", "charges.", 22, 47),
+                 L("hb", "Prime Coat", 22, 75), L("db1", "Supply and", 22, 96), L("db2", "charges.", 22, 107)),
+            cell(1, 2, L("ua", "MT", 122, 40), L("ub", "Drum", 122, 100)),
+            cell(1, 3, L("ra", "37.00", 162, 40), L("rb", "385.00", 162, 100)),
+            cell(2, 0), cell(2, 1, L("tot", "Total", 22, 214)), cell(2, 2), cell(2, 3),
+        ],
+    )
+
+
+def test_aligned_items_in_one_ruled_row_become_rows():
+    t = _item_table()
+    assert split_item_rows(t) == 1
+    assert t.n_rows == 4 and t.row_edges[2] == pytest.approx(57.5) and t.hidden_row_edges == [2]
+    text = {(c.row, c.col): [ln.id for ln in c.lines] for c in t.cells}
+    assert text[(1, 1)] == ["ha", "da1", "da2"], "a heading stays with the item below it"
+    assert text[(2, 1)] == ["hb", "db1", "db2"]
+    assert text[(1, 3)] == ["ra"] and text[(2, 3)] == ["rb"]
+    assert text[(3, 1)] == ["tot"], "rows after the split move down"
+
+
+def test_one_item_with_a_long_description_stays_one_row():
+    t = _item_table()
+    for c in t.cells:
+        if c.row == 1:
+            c.lines = [ln for ln in c.lines if ln.baseline < 60]
+    assert split_item_rows(t) == 0 and t.n_rows == 3
+
+
+def test_split_rows_draw_no_rule_between_items():
+    t = _item_table()
+    split_item_rows(t)
+    page = Page(number=1, width=300, height=300, elements=[t])
+    html, _ = render_clean_document(Document(source_file="t.pdf", page_count=1, pages=[page]))
+    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", html)
+    assert all(cls == "no-b" for cls in re.findall(r'<td class="([^"]*)"', rows[1]))
+    assert all(cls == "no-t" for cls in re.findall(r'<td class="([^"]*)"', rows[2]))
+    assert not re.search(r"<t[dh] class=", rows[0] + rows[3]), "ruled edges keep their borders"
+    assert "margin-top:" in rows[1], "a cell's lines keep the PDF's gaps"
+
+
 def _clean_html(line: Line) -> tuple[str, str]:
     page = Page(number=1, width=300, height=300,
                 elements=[TextBlock(id="b", bbox=line.bbox, lines=[line])])
