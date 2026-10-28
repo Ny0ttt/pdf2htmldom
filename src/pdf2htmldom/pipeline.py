@@ -36,6 +36,7 @@ from .layout import (
 from .models import Document, Page
 from .render import render_clean_document, render_document
 from .tables import detect_tables, flag_cross_page_tables
+from .underline import detect_underlines
 
 LIGATURES = {
     "\ufb00": "ff", "\ufb01": "fi", "\ufb02": "fl", "\ufb03": "ffi",
@@ -173,6 +174,11 @@ def build_ir(
             raw.warnings.append(
                 f"page {raw.number}: {n_merged} text-layer fragment(s) merged into recovered lines"
             )
+        # Before tables: an underline inside a cell would otherwise be folded away
+        # as a table border.
+        raw.lines, raw.drawings, n_underlines = detect_underlines(raw.lines, raw.drawings)
+        if n_underlines:
+            raw.warnings.append(f"page {raw.number}: {n_underlines} rule(s) rebuilt as underlined text")
         raw_pages.append(raw)
 
         tables, remaining, rejected = detect_tables(pymupdf_page, raw.lines, raw.number)

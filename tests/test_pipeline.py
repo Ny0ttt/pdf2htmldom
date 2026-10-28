@@ -434,6 +434,78 @@ def test_text_on_a_section_bar_is_one_heading():
     assert len(out[0].lines) == 2
 
 
+# --- underlines ----------------------------------------------------------------
+# Measured from a real claim sheet: a 0.96pt filled rect starting ~1pt under
+# a 9pt bold heading's baseline.
+
+import pymupdf  # noqa: E402
+
+from pdf2htmldom.models import Document, Page  # noqa: E402
+from pdf2htmldom.render import render_clean_document  # noqa: E402
+from pdf2htmldom.underline import detect_underlines  # noqa: E402
+
+
+def _rule(x0, x1, top, t=0.96, color="#000000"):
+    return DrawingBlock(id=f"r{x0:.0f}-{top:.0f}", bbox=BBox(x0=x0, y0=top, x1=x1, y1=top + t), fill=color)
+
+
+def _measured_line(lid, text, x0, baseline, size=9.0, bold=False):
+    w = pymupdf.get_text_length(text, fontname="hebo" if bold else "helv", fontsize=size)
+    return _line(lid, text, x0, x0 + w, baseline, source="pdf", size=size, bold=bold)
+
+
+def test_rule_under_a_heading_becomes_an_underline():
+    ln = _measured_line("h", "Crusher run", 94.9, 137.7, bold=True)
+    lines, kept, n = detect_underlines([ln], [_rule(94.9, ln.bbox.x1, 138.7)])
+    s = lines[0].spans[0]
+    assert n == 1 and kept == []
+    assert s.underline and abs(s.underline_offset - 1.0) < 0.01 and abs(s.underline_thickness - 0.96) < 0.01
+
+
+def test_rule_wider_than_its_text_is_kept():
+    ln = _measured_line("h", "Crusher run", 94.9, 137.7, bold=True)
+    sep = _rule(53.9, 798.2, 138.7)
+    lines, kept, n = detect_underlines([ln], [sep])
+    assert n == 0 and kept == [sep] and not lines[0].spans[0].underline
+
+
+def test_strikethrough_and_other_colours_are_not_underlines():
+    ln = _measured_line("h", "Crusher run", 94.9, 137.7)
+    strike = _rule(94.9, ln.bbox.x1, 134.5)
+    red = _rule(94.9, ln.bbox.x1, 138.7, color="#ff0000")
+    _, kept, n = detect_underlines([ln], [strike, red])
+    assert n == 0 and kept == [strike, red]
+
+
+def test_partial_rule_underlines_only_the_words_it_covers():
+    ln = _measured_line("p", "Supply and deliver", 100, 200)
+    x = 100 + pymupdf.get_text_length("Supply and ", fontname="helv", fontsize=9)
+    lines, _, n = detect_underlines([ln], [_rule(x, ln.bbox.x1, 201)])
+    spans = lines[0].spans
+    assert n == 1 and lines[0].text == "Supply and deliver"
+    assert [(s.text, s.underline) for s in spans] == [("Supply and ", False), ("deliver", True)]
+
+
+def _clean_html(line: Line) -> tuple[str, str]:
+    page = Page(number=1, width=300, height=300,
+                elements=[TextBlock(id="b", bbox=line.bbox, lines=[line])])
+    return render_clean_document(Document(source_file="t.pdf", page_count=1, pages=[page]))
+
+
+def test_clean_output_marks_underlined_text():
+    head = _measured_line("h", "Crusher run", 94.9, 137.7, bold=True)
+    (head,), _, _ = detect_underlines([head], [_rule(94.9, head.bbox.x1, 138.7)])
+    html, css = _clean_html(head)
+    assert re.search(r'<p class="b u" style="[^"]*--u-o:1pt;--u-t:0.96pt">Crusher run</p>', html)
+    assert "text-underline-offset:var(--u-o" in css and "text-decoration-skip-ink:none" in css
+
+    part = _measured_line("p", "Supply and deliver", 100, 200)
+    x = 100 + pymupdf.get_text_length("Supply and ", fontname="helv", fontsize=9)
+    (part,), _, _ = detect_underlines([part], [_rule(x, part.bbox.x1, 201)])
+    html, _ = _clean_html(part)
+    assert re.search(r'<p style="[^"]*">Supply and <span class="u" style="[^"]*">deliver</span></p>', html)
+
+
 # --- clean output --------------------------------------------------------------
 
 

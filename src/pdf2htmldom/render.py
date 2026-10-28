@@ -75,8 +75,19 @@ def _key(span: Span) -> str:
             span.color,
             "b" if span.bold else "",
             "i" if span.italic else "",
+            f"u{span.underline_offset}/{span.underline_thickness}" if span.underline else "",
         ]
     )
+
+
+def _underline_css(span: Span) -> list[str]:
+    """The PDF's rule is solid through descenders, hence skip-ink:none."""
+    parts = ["text-decoration:underline", "text-decoration-skip-ink:none"]
+    if span.underline_thickness is not None:
+        parts.append(f"text-decoration-thickness:{_num(span.underline_thickness)}pt")
+    if span.underline_offset is not None:
+        parts.append(f"text-underline-offset:{_num(span.underline_offset)}pt")
+    return parts
 
 
 def _style_for(span: Span) -> str:
@@ -85,6 +96,8 @@ def _style_for(span: Span) -> str:
         parts.append("font-weight:700")
     if span.italic:
         parts.append("font-style:italic")
+    if span.underline:
+        parts.extend(_underline_css(span))
     return ";".join(parts)
 
 
@@ -440,6 +453,10 @@ body{{font-kerning:none;-webkit-font-smoothing:antialiased}}
 .c{{font-family:{CALIBRI_STACK}}}
 .w{{color:#fff}}
 .r{{color:#f00}}
+/* Underline at the PDF rule's own depth and weight: --u-o is how far below the
+   baseline it starts, --u-t how thick it is. */
+.u{{text-decoration:underline;text-decoration-skip-ink:none;
+  text-decoration-thickness:var(--u-t,auto);text-underline-offset:var(--u-o,auto)}}
 
 /* Shapes */
 .rule{{background:#000}}
@@ -499,6 +516,7 @@ def _span_style(s: Span) -> dict:
         "b": s.bold,
         "i": s.italic,
         "color": s.color.lower(),
+        "u": (s.underline_offset, s.underline_thickness) if s.underline else None,
     }
 
 
@@ -506,9 +524,18 @@ def _dominant(spans: list[Span]) -> Span:
     return max(spans, key=lambda s: len(s.text.strip()))
 
 
+def _line_base(ln: Line) -> dict:
+    """The style a line's element carries. An underline goes on the line only
+    when every run has it: a child cannot remove a decoration its parent draws."""
+    base = _span_style(_dominant(ln.spans))
+    if base["u"] and any(_span_style(s)["u"] != base["u"] for s in ln.spans if s.text.strip()):
+        base["u"] = None
+    return base
+
+
 def _style_attrs(st: dict, base: dict | None = None) -> tuple[list[str], list[str]]:
     """Classes and inline declarations for ``st``, relative to ``base``."""
-    base = base or {"fam": "", "b": False, "i": False, "color": "#000000"}
+    base = base or {"fam": "", "b": False, "i": False, "color": "#000000", "u": None}
     cls: list[str] = []
     css: list[str] = []
     if st["fam"] != base["fam"]:
@@ -525,6 +552,13 @@ def _style_attrs(st: dict, base: dict | None = None) -> tuple[list[str], list[st
             cls.append(_COLOR_CLASS[st["color"]])
         else:
             css.append(f"color:{st['color']}")
+    if st["u"] and st["u"] != base["u"]:
+        cls.append("u")
+        offset, thickness = st["u"]
+        if offset is not None:
+            css.append(f"--u-o:{_num(offset)}pt")
+        if thickness is not None:
+            css.append(f"--u-t:{_num(thickness)}pt")
     return cls, css
 
 
@@ -582,7 +616,7 @@ def _clean_line(ln: Line, tag: str, corrections: dict[str, dict]) -> str:
     fix = corrections.get(ln.id, {})
     fs = float(fix.get("fs", 1.0))
     size = ln.size * fs
-    base = _span_style(_dominant(ln.spans))
+    base = _line_base(ln)
     cls, css = _style_attrs(base)
     top = _line_top(ln) + float(fix.get("dy", 0.0))
     css = [f"left:{_num(ln.origin_x)}pt", f"top:{_num(top)}pt", f"font-size:{_num(size)}pt"] + css
@@ -695,7 +729,7 @@ def _clean_table(t: TableBlock, corrections: dict[str, dict]) -> str:
                 )
                 texts = []
                 for ln in cell.lines:
-                    base = _span_style(_dominant(ln.spans))
+                    base = _line_base(ln)
                     cls, css = _style_attrs(base)
                     css.insert(0, f"font-size:{_num(ln.size)}pt")
                     c_attr = f' class="{" ".join(cls)}"' if cls else ""

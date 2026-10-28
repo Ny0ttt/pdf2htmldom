@@ -81,6 +81,10 @@ class Span(BaseModel):
     italic: bool = False
     serif: bool = False
     mono: bool = False
+    # Rebuilt from a thin rule drawn under the text; a PDF has no underline style.
+    underline: bool = False
+    underline_offset: float | None = None  # rule's top edge, pt below the baseline
+    underline_thickness: float | None = None
     bbox: BBox
     origin: tuple[float, float]  # baseline origin of the first character
     ascender: float  # as a fraction of size
